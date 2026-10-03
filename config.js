@@ -1,0 +1,1 @@
+window.MARZ_CONFIG = Object.freeze({url:'https://ennofujfpkhtmhdadxwl.supabase.co',key:"sb_publishable_K5fspfJiKLgSNwy2AQE5Sg_K8sj30JA",api:'https://ennofujfpkhtmhdadxwl.supabase.co/functions/v1/marz-rips-api'});
