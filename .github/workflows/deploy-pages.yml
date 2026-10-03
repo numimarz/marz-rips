@@ -29,7 +29,8 @@ jobs:
       - name: Prepare site files
         run: |
           mkdir _site
-          cp index.html _site/index.html
+          cp index.html classic.html admin.html account.css account.js admin.js config.js _site/
+          cp -R assets _site/assets
       - name: Upload site artifact
         uses: actions/upload-pages-artifact@v4
         with:
@@ -37,3 +38,4 @@ jobs:
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4
+

@@ -2,7 +2,7 @@
  'use strict';
  const C=window.MARZ_CONFIG,db=window.supabase.createClient(C.url,C.key,{auth:{storageKey:'marz-rips-account-v1',persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
  const $=id=>document.getElementById(id),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
- let user=null,profile=null,snapshot={packs:[],pulls:[],shipping:[]},settings={payments:false,sales:false,shipping:false},timer=null,saving=null,revision=null,loading=false,saveError=false;
+ let user=null,profile=null,snapshot={packs:[],pulls:[],shipping:[]},settings={payments:false,sales:false,shipping:false},timer=null,saving=null,revision=null,loading=false,saveError=false,pendingDemo=null;
  const notice=s=>{if($('accountStatus'))$('accountStatus').textContent=s;window.MarzDemo?.toast(s);};
  async function api(action,extra={}){const {data:{session}}=await db.auth.getSession();const r=await fetch(C.api,{method:'POST',headers:{'Content-Type':'application/json',apikey:C.key,...(session?{Authorization:'Bearer '+session.access_token}:{})},body:JSON.stringify({action,...extra})});const d=await r.json();if(!r.ok)throw Error(d.error||'Could not complete request.');return d;}
  function member(){return snapshot.membership?.status==='active'&&Date.parse(snapshot.membership.paid_until)>Date.now();}
@@ -27,7 +27,7 @@
    if(!r.data){r=await db.from('mr_profiles').insert({user_id:id,display_name:user.user_metadata?.display_name||'Collector'}).select().single();if(r.error)throw r.error;}
    if(user?.id!==id)return;profile=r.data;revision=profile.updated_at;saveError=false;snapshot=await api('snapshot');
    if(window.MarzDemo){const saved=profile.demo_data;window.MarzDemo.restore(Array.isArray(saved?.pulls)?saved:{pulls:[],member:false,streak:0,lastVisit:'',lastRip:'',shippingRequests:0,firstUpgradeUsed:false});}
-   render();status('Signed in. Account progress saves online.');
+   render();const pending=localStorage.getItem('marz-rips-unsynced-'+id);status(pending?'This device has unsynced demo progress. Use Recover unsynced progress to restore it.':'Signed in. Account progress saves online.');if(pending)notice('Unsynced demo progress is available to recover on this device.');
   }catch(e){notice('Account could not load: '+e.message+' Your local demo is unchanged.');}finally{loading=false;}
  }
  async function saveProfile(data){
@@ -35,7 +35,7 @@
   const r=await db.from('mr_profiles').update({...data,updated_at:new Date().toISOString()}).eq('user_id',id).eq('updated_at',expected).select('updated_at');
   if(r.error)throw r.error;if(!r.data.length){saveError=true;throw Error('Your account changed on another device. Reload before saving more progress.');}if(user?.id===id)revision=r.data[0].updated_at;
  }
- function queueSave(data){const id=user?.id;if(!id||!profile||loading)return;clearTimeout(timer);timer=setTimeout(()=>{saving=(saving||Promise.resolve()).catch(()=>{}).then(async()=>{if(user?.id!==id)return;try{await saveProfile({demo_data:data});if($('cloudState'))$('cloudState').textContent='Saved to your account';}catch(e){if($('cloudState'))$('cloudState').textContent='Save failed — '+e.message;notice(e.message);}});},350);if($('cloudState'))$('cloudState').textContent='Saving to your account…';}
+ function queueSave(data){const id=user?.id;if(!id||!profile||loading)return;pendingDemo=data;try{localStorage.setItem('marz-rips-unsynced-'+id,JSON.stringify({data,revision}));}catch{}clearTimeout(timer);timer=setTimeout(()=>{saving=(saving||Promise.resolve()).catch(()=>{}).then(async()=>{if(user?.id!==id)return;try{await saveProfile({demo_data:data});if(pendingDemo===data){pendingDemo=null;try{localStorage.removeItem('marz-rips-unsynced-'+id);}catch{}}if($('cloudState'))$('cloudState').textContent='Saved to your account';}catch(e){if($('cloudState'))$('cloudState').textContent='Save failed — '+e.message;notice(e.message);}});},350);if($('cloudState'))$('cloudState').textContent='Saving to your account…';}
  async function refresh(){if(!user)return;try{snapshot=await api('snapshot');render();}catch(e){notice(e.message);}}
  async function checkout(kind,tier){if(!user){modal();status('Create a free account or sign in first.');return;}if(!$('purchaseDisclosure')?.checked){notice('Read and accept the digital-card and shipping disclosure first.');return;}try{const d=await api('checkout',{kind,tier,disclosure_accepted:true});location.assign(d.url);}catch(e){notice(e.message);}}
  async function openReady(id){try{const d=await api('open',{pack_id:id});await refresh();window.MarzDemo?.showVerified(d.pull);}catch(e){notice(e.message);}}
@@ -65,9 +65,10 @@
   const b=e.target.closest('button');if(!b)return;
   if(b.dataset.auth)return authAction(b.dataset.auth);
   if(b.id==='accountNav'||b.id==='createAccount')modal();if(b.id==='closeAccount')modal(false);
-  if(b.id==='signOut'){clearTimeout(timer);if(saving)await saving;await db.auth.signOut();return;}
+  if(b.id==='signOut'){clearTimeout(timer);if(saving)await saving;if(pendingDemo){try{await saveProfile({demo_data:pendingDemo});localStorage.removeItem('marz-rips-unsynced-'+user.id);pendingDemo=null;}catch(e){notice('Save failed. A local recovery copy is retained: '+e.message);}}await db.auth.signOut();return;}
   if(b.dataset.open)return openReady(b.dataset.open);
   if(b.id==='memberButton'){if(member()){try{location.assign((await api('portal')).url);}catch(e){notice(e.message);}}else checkout('membership');}
+  if(b.id==='recoverDemo'&&user){try{const saved=JSON.parse(localStorage.getItem('marz-rips-unsynced-'+user.id)||'null');if(!saved)return notice('No unsynced account progress on this device.');if(!confirm('Recover this device’s unsynced demo progress? This replaces account demo progress only.'))return;await saveProfile({demo_data:saved.data});pendingDemo=null;localStorage.removeItem('marz-rips-unsynced-'+user.id);window.MarzDemo.restore(saved.data);notice('Unsynced demo recovered.');}catch(e){notice(e.message);}}
   if(b.id==='newFolder'){const name=$('folderName').value.trim();if(!name||!profile)return;const folders=[...(profile.folders||[]),{id:crypto.randomUUID(),name:name.slice(0,60),pulls:[]}];if(folders.length>50)return notice('Maximum 50 folders.');try{await saveProfile({folders});profile.folders=folders;$('folderName').value='';render();}catch(e){notice(e.message);}}
   if(b.id==='importDemo'&&user){const data=window.MarzDemo?.guest();if(!data?.pulls?.length)return notice('No guest progress to import.');if(!confirm('Import this device’s guest demo into this account? This replaces the account demo progress, not real cards or rewards.'))return;try{await saveProfile({demo_data:data});profile.demo_data=data;window.MarzDemo.restore(data);notice('Guest demo imported. No paid rewards were awarded.');}catch(e){notice(e.message);}}
  });
@@ -76,7 +77,7 @@
  $('shippingForm')?.addEventListener('submit',async e=>{e.preventDefault();const address=Object.fromEntries(new FormData(e.target));try{const d=await api('shipping',{address});notice(d.message);e.target.reset();await refresh();}catch(e){notice(e.message);}});
  const oldShipping=window.requestShipping;window.requestShipping=()=>{if(!user){modal();return;}if(!member()){notice('Physical shipping requires an active $1/month membership.');return;}if(!settings.shipping){notice('Physical shipping is not open yet.');return;}$('shippingDetails').hidden=false;$('shippingDetails').scrollIntoView({behavior:'smooth'});};
  window.toggleMember=()=>checkout('membership');
- db.auth.onAuthStateChange((event,session)=>{const previous=user?.id;user=session?.user||null;if(previous!==user?.id){clearTimeout(timer);profile=null;snapshot={packs:[],pulls:[],shipping:[]};if(!user){window.MarzDemo?.restore(window.MarzDemo.guest());render();}else setTimeout(loadAccount,0);}if(event==='PASSWORD_RECOVERY'){modal();$('accountRecovery').hidden=false;status('Verified reset link. Enter your new password.');}});
+ db.auth.onAuthStateChange((event,session)=>{const previous=user?.id;user=session?.user||null;if(previous!==user?.id){clearTimeout(timer);profile=null;pendingDemo=null;snapshot={packs:[],pulls:[],shipping:[]};if(!user){window.MarzDemo?.restore(window.MarzDemo.guest());render();}else setTimeout(loadAccount,0);}if(event==='PASSWORD_RECOVERY'){modal();$('accountRecovery').hidden=false;status('Verified reset link. Enter your new password.');}});
  (async()=>{try{settings=await api('status');render();}catch(e){notice('Account service unavailable. Demo play remains available.');}const {data:{session}}=await db.auth.getSession();user=session?.user||null;if(user)await loadAccount();else render();if(new URLSearchParams(location.search).get('checkout')==='success')notice('Checking payment confirmation. Your packs unlock after the provider verifies payment.');})();
  setInterval(()=>{if(user&&!document.hidden)refresh();},60000);
 })();
