@@ -66,7 +66,31 @@ Deno.serve(async req=>{
   const action=body.action;
   if(action==='snapshot'){
    const [membership,packs,pulls,shipping]=await Promise.all([db.from('mr_memberships').select('*').eq('user_id',user.id).maybeSingle(),db.from('mr_packs').select('id,tier_cents,kind,milestone,status,created_at').eq('user_id',user.id).in('status',['ready','awaiting_payment']).order('created_at'),db.from('mr_pulls').select('*').eq('user_id',user.id).order('opened_at',{ascending:false}),db.from('mr_shipping').select('*').eq('user_id',user.id).order('created_at',{ascending:false})]);
-   return json({admin,membership:checked(membership),packs:checked(packs),pulls:checked(pulls),shipping:checked(shipping)});
+   const paidResult=await db.from('mr_packs').select('id',{count:'exact',head:true}).eq('user_id',user.id).eq('kind','paid').eq('status','opened');if(paidResult.error)throw Error(paidResult.error.message);
+   return json({admin,membership:checked(membership),packs:checked(packs),pulls:checked(pulls),shipping:checked(shipping),paid_open_count:paidResult.count||0});
+  }
+  if(action==='trade_pool'){
+   const membership=checked(await db.from('mr_memberships').select('status,paid_until').eq('user_id',user.id).maybeSingle());
+   const mine=checked(await db.from('mr_trade_listings').select('id,pull_id,tier_cents,status,created_at').eq('owner_id',user.id).eq('status','listed').order('created_at',{ascending:false}));
+   const history=checked(await db.from('mr_trades').select('id,maker_id,taker_id,requested_title,offered_title,tier_cents,created_at').or('maker_id.eq.'+user.id+',taker_id.eq.'+user.id).order('created_at',{ascending:false}).limit(100));
+   if(membership?.status!=='active'||!(Date.parse(membership.paid_until)>Date.now()))return json({active:false,listings:[],mine,history});
+   const offset=Math.max(0,Math.min(10000,Math.floor(Number(body.offset)||0))),tier=Number(body.tier)||0;
+   let query=db.from('mr_trade_listings').select('id,owner_id,pull_id,tier_cents,created_at,pull:mr_pulls!pull_id(title,rarity,image_url,user_id,shipping_status)').eq('status','listed').neq('owner_id',user.id).order('created_at',{ascending:false}).range(offset,offset+29);
+   if([100,300,500,900,1300].includes(tier))query=query.eq('tier_cents',tier);
+   const rows=checked(await query),owners=[...new Set(rows.map((l:any)=>l.owner_id))];
+   const memberships=owners.length?checked(await db.from('mr_memberships').select('user_id,status,paid_until').in('user_id',owners)):[];
+   const names=owners.length?checked(await db.from('mr_profiles').select('user_id,display_name').in('user_id',owners)):[];
+   const listings=rows.filter((l:any)=>{const p=Array.isArray(l.pull)?l.pull[0]:l.pull,m=memberships.find((m:any)=>m.user_id===l.owner_id);return p?.user_id===l.owner_id&&p.shipping_status==='held'&&m?.status==='active'&&Date.parse(m.paid_until)>Date.now();}).map((l:any)=>{const p=Array.isArray(l.pull)?l.pull[0]:l.pull;return {id:l.id,pull_id:l.pull_id,tier_cents:l.tier_cents,created_at:l.created_at,title:p.title,rarity:p.rarity,image_url:p.image_url,collector:names.find((n:any)=>n.user_id===l.owner_id)?.display_name||'Collector'};});
+   return json({active:true,listings,mine,history,next_offset:rows.length===30?offset+30:null});
+  }
+  if(action==='trade_list'){
+   if(body.consent!==true)return json({error:'Authorize a one-for-one swap for any held card from the same pack tier before listing.'},400);
+   return json({listing_id:checked(await db.rpc('mr_list_trade',{p_user:user.id,p_pull:body.pull_id}))});
+  }
+  if(action==='trade_cancel'){checked(await db.rpc('mr_cancel_trade',{p_user:user.id,p_listing:body.listing_id}));return json({ok:true});}
+  if(action==='trade_swap'){
+   if(body.confirmed!==true)return json({error:'Confirm which card you give and which card you receive.'},400);
+   return json({trade:checked(await db.rpc('mr_swap_trade',{p_user:user.id,p_listing:body.listing_id,p_offer:body.pull_id,p_request:body.request_id}))});
   }
   if(action==='checkout'){
    if(!stripeKey||!webhookSecret)return json({error:'Subscriptions and paid packs are not open yet. Payment processing must be connected first; no charge was made.'},503);

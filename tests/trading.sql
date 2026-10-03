@@ -1,0 +1,51 @@
+-- Isolated transaction fixtures. No actual customer, purchase, membership or trade is persisted.
+begin;
+do $$
+declare a uuid:=gen_random_uuid(); b uuid:=gen_random_uuid(); c uuid:=gen_random_uuid(); nonmember uuid:=gen_random_uuid(); card uuid; pack uuid; original_pack uuid; want uuid; offer uuid; wrong uuid; third uuid; listing uuid; offer_listing uuid; request uuid:=gen_random_uuid(); swap jsonb; n int; denied boolean; k int;
+begin
+ insert into auth.users(id,email) values(a,'marz-trade-a@example.invalid'),(b,'marz-trade-b@example.invalid'),(c,'marz-trade-c@example.invalid'),(nonmember,'marz-trade-n@example.invalid');
+ insert into public.mr_memberships(user_id,status,paid_until) values(a,'active',now()+interval '1 day'),(b,'active',now()+interval '1 day'),(c,'active',now()+interval '1 day');
+ update public.mr_settings set sales_enabled=true,shipping_enabled=true;
+ insert into public.mr_inventory(sku,title,tier_cents,pool) values('TRADE-TEST-REWARD','Milestone bonus',100,'bonus');
+ for k in 1..9 loop
+  insert into public.mr_inventory(sku,title,tier_cents,status) values('TRADE-TEST-A-'||k,'A card '||k,100,'reserved') returning id into card;
+  insert into public.mr_packs(user_id,inventory_id,tier_cents,kind,status) values(a,card,100,'paid','ready') returning id into pack;
+  swap:=public.mr_open_pack(a,pack);if k=1 then want:=(swap->>'id')::uuid;original_pack:=pack;end if;
+ end loop;
+ insert into public.mr_inventory(sku,title,tier_cents,status) values('TRADE-TEST-B','B bonus card',100,'reserved') returning id into card;
+ insert into public.mr_packs(user_id,inventory_id,tier_cents,kind,status) values(b,card,100,'bonus','ready') returning id into pack;
+ swap:=public.mr_open_pack(b,pack);offer:=(swap->>'id')::uuid;
+ insert into public.mr_inventory(sku,title,tier_cents,status) values('TRADE-TEST-B-WRONG','Wrong tier',300,'reserved') returning id into card;
+ insert into public.mr_packs(user_id,inventory_id,tier_cents,kind,status) values(b,card,300,'paid','ready') returning id into pack;
+ swap:=public.mr_open_pack(b,pack);wrong:=(swap->>'id')::uuid;
+ insert into public.mr_inventory(sku,title,tier_cents,status) values('TRADE-TEST-C','Third collector card',100,'reserved') returning id into card;
+ insert into public.mr_packs(user_id,inventory_id,tier_cents,kind,status) values(c,card,100,'paid','ready') returning id into pack;
+ swap:=public.mr_open_pack(c,pack);third:=(swap->>'id')::uuid;
+ denied:=false;begin perform public.mr_list_trade(nonmember,want);exception when others then denied:=sqlerrm like '%active subscription%';end;if not denied then raise exception 'FAILED nonmember listing';end if;
+ denied:=false;begin perform public.mr_list_trade(b,want);exception when others then denied:=sqlerrm like '%not in your account%';end;if not denied then raise exception 'FAILED foreign-owner listing';end if;
+ listing:=public.mr_list_trade(a,want);perform public.mr_list_trade(a,want);
+ select count(*) into n from public.mr_trade_listings where pull_id=want and status='listed';if n<>1 then raise exception 'FAILED duplicate listing';end if;
+ denied:=false;begin perform public.mr_swap_trade(a,listing,want,gen_random_uuid());exception when others then denied:=sqlerrm like '%yourself%';end;if not denied then raise exception 'FAILED self trade';end if;
+ denied:=false;begin perform public.mr_swap_trade(b,listing,wrong,gen_random_uuid());exception when others then denied:=sqlerrm like '%same pack tier%';end;if not denied then raise exception 'FAILED tier mismatch';end if;
+ update public.mr_memberships set paid_until=now()-interval '1 second' where user_id=a;
+ denied:=false;begin perform public.mr_swap_trade(b,listing,offer,gen_random_uuid());exception when others then denied:=sqlerrm like '%Both collectors%';end;if not denied then raise exception 'FAILED expired maker';end if;
+ update public.mr_memberships set paid_until=now()+interval '1 day' where user_id=a;
+ offer_listing:=public.mr_list_trade(b,offer);
+ swap:=public.mr_swap_trade(b,listing,offer,request);perform public.mr_swap_trade(b,listing,offer,request);
+ if (select user_id from public.mr_pulls where id=want)<>b or (select user_id from public.mr_pulls where id=offer)<>a then raise exception 'FAILED atomic ownership exchange';end if;
+ if (select status from public.mr_trade_listings where id=offer_listing)<>'cancelled' then raise exception 'FAILED stale offered listing';end if;
+ select count(*) into n from public.mr_trades where listing_id=listing;if n<>1 then raise exception 'FAILED replay duplicate trade';end if;
+ denied:=false;begin perform public.mr_swap_trade(c,listing,third,gen_random_uuid());exception when others then denied:=sqlerrm like '%already traded%';end;if not denied then raise exception 'FAILED stale listing trade';end if;
+ if (select user_id from public.mr_pulls where id=third)<>c then raise exception 'FAILED stale trade changed offered owner';end if;
+ denied:=false;begin perform public.mr_open_pack(a,original_pack);exception when others then denied:=sqlerrm like '%traded to another%';end;if not denied then raise exception 'FAILED former owner reopen';end if;
+ select count(*) into n from public.mr_packs where user_id=a and kind='paid' and status='opened';if n<>9 then raise exception 'FAILED paid history changed by trading';end if;
+ insert into public.mr_inventory(sku,title,tier_cents,status) values('TRADE-TEST-A-TENTH','Tenth A card',100,'reserved') returning id into card;
+ insert into public.mr_packs(user_id,inventory_id,tier_cents,kind,status) values(a,card,100,'paid','ready') returning id into pack;
+ perform public.mr_open_pack(a,pack);
+ select count(*) into n from public.mr_packs where user_id=a and kind='bonus' and milestone=10 and status='ready';if n<>1 then raise exception 'FAILED bonus after traded paid card';end if;
+ listing:=public.mr_list_trade(b,want);perform public.mr_request_shipping(b,'{"name":"Fixture only","line1":"Fixture","city":"Fixture","region":"Fixture","postal":"00000","country":"US"}');
+ if (select status from public.mr_trade_listings where id=listing)<>'cancelled' then raise exception 'FAILED shipping did not withdraw listing';end if;
+ denied:=false;begin perform public.mr_list_trade(b,want);exception when others then denied:=sqlerrm like '%requested for shipping%';end;if not denied then raise exception 'FAILED shipping card listing';end if;
+ if has_function_privilege('authenticated','public.mr_swap_trade(uuid,uuid,uuid,uuid)','EXECUTE') or has_table_privilege('authenticated','public.mr_trade_listings','SELECT') then raise exception 'FAILED marketplace permissions';end if;
+end $$;
+rollback;

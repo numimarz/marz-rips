@@ -29,7 +29,7 @@ jobs:
       - name: Prepare site files
         run: |
           mkdir _site
-          cp index.html classic.html admin.html account.css account.js admin.js config.js _site/
+          cp index.html classic.html admin.html account.css account.js admin.js config.js trading.js trading.css _site/
           cp -R assets _site/assets
       - name: Upload site artifact
         uses: actions/upload-pages-artifact@v4

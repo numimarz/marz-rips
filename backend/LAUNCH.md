@@ -20,12 +20,20 @@ Webhook signatures are checked against the raw request body with a five-minute t
 
 Use the dashboard to add one row per physically held card and label the sleeve with its SKU. Add separate $1 bonus inventory before paid sales; demo cards are never real stock. The bonus threshold is 10 paid openings; bonus opens do not advance it. Inventory is reserved before pack checkout and its identity stays hidden until the verified open. An earned bonus pack also reserves a physical card.
 
-Keep sales and shipping disabled until pricing, checkout, stock, shipping quotes, fees, policies and recovery are tested. Shipping fees are collected and verified separately; the dashboard records paid or owner-waived fees. Shipping requests stay in a separate notification queue until fulfilled with a real carrier and tracking number. Account ownership is retained; there is no card-forfeiture timer, trade, or store credit in this build.
+Keep sales and shipping disabled until pricing, checkout, stock, shipping quotes, fees, policies and recovery are tested. Shipping fees are collected and verified separately; the dashboard records paid or owner-waived fees. Shipping requests stay in a separate notification queue until fulfilled with a real carrier and tracking number. Account ownership is retained; there is no card-forfeiture timer or store credit in this build.
 
 ## Verification and backup
 
-`tests/transactions.sql` uses temporary transaction fixtures and rolls all changes back. It checks subscription gates, unpaid/other-owner denials, idempotent opens, one bonus at 10 paid openings, bonus exclusion, expired membership shipping denial, duplicate shipment denial, admin denial, and public-role permissions. All ten tables have RLS; sensitive backend tables have no public grants. Commerce RPCs are executable only by `service_role` and use invoker privileges. Customer transactions are serialized with advisory locks.
+`tests/transactions.sql` uses temporary transaction fixtures and rolls all changes back. It checks subscription gates, unpaid/other-owner denials, idempotent opens, one bonus at 10 paid openings, bonus exclusion, expired membership shipping denial, duplicate shipment denial, admin denial, and public-role permissions. All Marz tables have RLS; sensitive backend tables have no public grants. Commerce RPCs are executable only by `service_role` and use invoker privileges. Customer transactions are serialized with advisory locks.
 
 The old layout is retained in `classic.html` and prior Git commits. The in-page Classic layout switch remains. Guest demo storage keeps its existing key; signing in starts an account-specific binder and allows deliberate guest import. Failed cloud demo saves retain a local account-specific recovery copy. Do not reset demo progress until Bri authorizes a launch reset; real payments and shipping records must not be reset with demo data.
 
 Known launch limitations: admin grids show the latest 500 records, contacts are limited to 100 collectors, no automated shipping-price checkout or refunds, no monitoring email alerts, and no public production billing test has been completed. Increase pagination/monitoring before operating at larger volume.
+
+## Subscriber trading
+
+Apply `backend/schema.sql` followed by `backend/trading.sql` on a fresh deployment. Active subscribers may list held, inventory-backed cards for an instant one-for-one exchange with any held card from the same pack tier. This is a pack-tier rule, not an appraisal or a claim of equal market value. Listing requires explicit authorization; taking a listing requires confirmation of both cards. Demo cards cannot enter the pool.
+
+Both subscribers and both cards are checked again in the transaction. Ownership transfers together, competing requests are rejected, and retry IDs prevent duplicate swaps. Withdrawals and shipping requests cancel live listings. Marz retains the physical inventory; the new owner may keep the card in their binder, relist it, or request shipping while subscribed. Trading does not require shipping and does not reset paid-opening reward history.
+
+`tests/trading.sql` rolls back its fixtures and checks membership, ownership, same-tier rules, stale listings, retry behavior, listing withdrawal, paid reward history, shipping exclusion, and public-role restrictions. Real trading remains unavailable until billing and real inventory are connected; no demo progress is reset.

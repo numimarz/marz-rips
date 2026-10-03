@@ -48,7 +48,7 @@
   if($('memberButton')){$('memberButton').textContent=member()?'Manage membership':settings.payments&&settings.sales?'Subscribe · $1/month':'Membership checkout coming soon';$('memberState').textContent=member()?'Active subscription · $1 packs unlocked':'Subscription required for $1 packs and physical shipping. No charge until checkout is available.';}
   if($('holdBox')){$('holdBox').className='holdbox'+(member()?' active':'');$('holdBox').innerHTML=`<span class="holdicon">${member()?'📦':'🔒'}</span><strong>${snapshot.pulls.filter(p=>p.shipping_status==='held').length} DIGITAL COLLECTIBLES HELD</strong><small>Physical shipping requires active membership. Shipping is charged separately.</small>`;}
   if($('shippingButton')){$('shippingButton').textContent='Request physical shipping';$('shippingButton').disabled=!user||!member()||!settings.shipping||!snapshot.pulls.some(p=>p.shipping_status==='held');}
-  const paid=snapshot.pulls.filter(p=>p.kind==='paid').length;
+  const paid=Number(snapshot.paid_open_count)||0;
   if($('loyaltyText'))$('loyaltyText').textContent=`${paid} paid packs opened · ${10-paid%10} to your next $1 bonus pack. Demo and bonus opens do not count.`;
   if($('readyPacks'))$('readyPacks').innerHTML=snapshot.packs.filter(p=>p.status==='ready').map(p=>`<button class="btn primary" data-open="${esc(p.id)}">Rip ${p.kind==='bonus'?'earned bonus':'paid'} $${p.tier_cents/100} pack</button>`).join('')||'<p class="micro">Your purchased and earned packs will appear here after payment is verified.</p>';
   if($('digitalBinder')){
@@ -58,6 +58,7 @@
   }
   if($('shippingHistory'))$('shippingHistory').innerHTML=snapshot.shipping.map(s=>`<p><b>${esc(s.status)}</b> · ${s.pull_ids.length} cards · ${esc(s.fee_status)} ${s.tracking?'· '+esc(s.carrier)+' '+esc(s.tracking):''}</p>`).join('');
   window.MarzDemo?.renderPacks();
+  window.MarzTrades?.onAccount({userId:user?.id||null,member:member(),pulls:snapshot.pulls});
   if(typeof window.renderMarzAdmin==='function')window.renderMarzAdmin(snapshot.admin,user);
  }
  window.MarzAccount={api,db,member,checkout,refresh,saveDemo:queueSave,render,isSignedIn:()=>!!user,canBuy:()=>!!user&&settings.payments&&settings.sales,openReady};
