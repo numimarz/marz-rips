@@ -106,7 +106,8 @@ Deno.serve(async req=>{
     Object.assign(base,{mode:'subscription','line_items[0][price_data][unit_amount]':'100','line_items[0][price_data][recurring][interval]':'month','line_items[0][price_data][product_data][name]':'Marz Rips membership','subscription_data[metadata][app]':'marz-rips','subscription_data[metadata][user_id]':user.id});
    }else if(body.kind==='pack'){
     pack=checked(await db.rpc('mr_reserve_pack',{p_user:user.id,p_tier:Number(body.tier)*100}));
-    Object.assign(base,{mode:'payment','payment_method_types[0]':'card','line_items[0][price_data][unit_amount]':String(Number(body.tier)*100),'line_items[0][price_data][product_data][name]':'Marz Rips $'+body.tier+' digital pack','metadata[pack_id]':pack!,'expires_at':String(Math.floor(Date.now()/1000)+1800)});
+    // Leave payment methods dynamic so eligible methods enabled in Stripe Dashboard can appear.
+    Object.assign(base,{mode:'payment','line_items[0][price_data][unit_amount]':String(Number(body.tier)*100),'line_items[0][price_data][product_data][name]':'Marz Rips $'+body.tier+' digital pack','metadata[pack_id]':pack!,'expires_at':String(Math.floor(Date.now()/1000)+1800)});
    }else return json({error:'Unknown checkout type'},400);
    try{const s=await stripe('checkout/sessions','POST',base,pack||('member-'+user.id+'-'+Math.floor(Date.now()/120000)));if(pack)checked(await db.from('mr_packs').update({stripe_session:s.id}).eq('id',pack));return json({url:s.url});}
    catch(e){if(pack)await db.rpc('mr_expire_pack',{p_pack:pack});throw e;}

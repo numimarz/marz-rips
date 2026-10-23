@@ -16,6 +16,15 @@ The deployed `marz-rips-api` function reads `MARZ_STRIPE_SECRET_KEY` and `MARZ_S
 
 Webhook signatures are checked against the raw request body with a five-minute timestamp tolerance. Subscription status is fetched from Stripe and activated only for a paid $1/month USD plan. Pack purchases require a reserved inventory record and a matching paid checkout. A success-page redirect never creates an entitlement. The billing portal must support cancellation. Test renewal, cancellation, failed payment, duplicate webhook delivery, expired checkout, refunds, and inventory exhaustion before live billing. Refund events are flagged for owner review, not automatically resolved.
 
+## Payment methods and Cash App payouts
+
+One-time pack Checkout now leaves Stripe payment methods dynamic, matching the existing membership Checkout. Stripe Checkout can show eligible methods enabled in the Stripe Dashboard, such as cards, Link, Apple Pay, Google Pay, and Cash App Pay. Stripe decides which methods are eligible for each customer, currency, device, and payment flow. Enable and test each method in Stripe test mode before considering live charges. Cash App Pay is a customer payment option; it is separate from where Stripe sends Marz Rips payouts.
+
+Cash App provides direct-deposit account and routing numbers. Stripe accepts standard US routing/account details and some virtual bank accounts, but its documentation says non-standard accounts can have higher payout-failure rates and does not specifically confirm Cash App payout-account eligibility. Add the account only in Stripe Dashboard under external payout accounts, using Bri's own secure session. Confirm Stripe accepts it and complete a small payout test before opening sales. Never place account/routing numbers or Stripe secrets in GitHub, frontend code, or chat.
+
+PayPal through Stripe is currently limited to Stripe accounts based in the EU (except Hungary), Liechtenstein, Norway, the UK, and Switzerland. It is not currently available to a US-based Stripe account, so it would need a separate integration if required.
+
+
 ## Inventory and fulfillment
 
 Use the dashboard to add one row per physically held card and label the sleeve with its SKU. Add separate $1 bonus inventory before paid sales; demo cards are never real stock. The bonus threshold is 10 paid openings; bonus opens do not advance it. Inventory is reserved before pack checkout and its identity stays hidden until the verified open. An earned bonus pack also reserves a physical card.
